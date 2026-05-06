@@ -1,4 +1,4 @@
-use calamine::{open_workbook_auto, DataType, Reader};
+use calamine::{open_workbook_auto, Data, Reader};
 use directories::ProjectDirs;
 use encoding_rs::GBK;
 use lettre::message::{Mailbox, MultiPart, SinglePart};
@@ -69,7 +69,7 @@ struct RecipientRow {
     message: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct EmailPreview {
     subject: String,
@@ -77,7 +77,7 @@ struct EmailPreview {
     html: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SendProgress {
     id: String,
@@ -276,7 +276,6 @@ fn parse_excel(path: &Path) -> Result<Vec<Vec<String>>, String> {
         .ok_or_else(|| "Excel 文件没有工作表".to_string())?;
     let range = workbook
         .worksheet_range(&sheet_name)
-        .ok_or_else(|| "读取第一个工作表失败".to_string())?
         .map_err(|error| format!("读取工作表失败：{error}"))?;
 
     let rows = range
@@ -385,19 +384,19 @@ fn normalize_header(value: &str) -> String {
         .replace('-', "")
 }
 
-fn cell_to_string(cell: &DataType) -> String {
+fn cell_to_string(cell: &Data) -> String {
     match cell {
-        DataType::Empty => String::new(),
-        DataType::String(value) => clean_cell(value),
-        DataType::Float(value) => {
+        Data::Empty => String::new(),
+        Data::String(value) => clean_cell(value),
+        Data::Float(value) => {
             if value.fract() == 0.0 {
                 format!("{value:.0}")
             } else {
                 value.to_string()
             }
         }
-        DataType::Int(value) => value.to_string(),
-        DataType::Bool(value) => value.to_string(),
+        Data::Int(value) => value.to_string(),
+        Data::Bool(value) => value.to_string(),
         other => other.to_string(),
     }
 }

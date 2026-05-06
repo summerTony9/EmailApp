@@ -8,8 +8,6 @@ coverage/
 
 client/src-tauri/target/
 client/src-tauri/gen/
-client/src-tauri/icons/
-
 server/data/
 *.sqlite
 *.sqlite-shm
@@ -17,4 +15,3 @@ server/data/
 
 .env
 .env.local
-

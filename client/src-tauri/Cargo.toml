@@ -6,7 +6,7 @@ authors = ["EmailApp"]
 edition = "2021"
 
 [build-dependencies]
-tauri-build = { version = "2.0.4", features = [] }
+tauri-build = { version = "2.6.0", features = [] }
 
 [dependencies]
 calamine = "0.24"
@@ -18,5 +18,5 @@ lettre = { version = "0.11", default-features = false, features = ["builder", "h
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tauri = { version = "2.2.0", features = [] }
-tauri-plugin-dialog = "2.2.0"
+tauri = { version = "2.11.0", features = [] }
+tauri-plugin-dialog = "2.7.1"
