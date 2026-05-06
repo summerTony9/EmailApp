@@ -1,0 +1,23 @@
+{
+  "name": "emailapp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cross-platform desktop app for deduplicated batch policy emails.",
+  "scripts": {
+    "client:dev": "npm --prefix client run tauri:dev",
+    "client:web": "npm --prefix client run dev",
+    "client:build": "npm --prefix client run build",
+    "client:test": "npm --prefix client run test",
+    "server:dev": "npm --prefix server run dev",
+    "server:start": "npm --prefix server run start",
+    "server:test": "npm --prefix server run test",
+    "test": "npm run server:test && npm run client:test",
+    "build": "npm run client:build",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
+

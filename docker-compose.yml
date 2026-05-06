@@ -1,0 +1,19 @@
+services:
+  emailapp-server:
+    build:
+      context: ./server
+    container_name: emailapp-server
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      HOST: "0.0.0.0"
+      DB_PATH: "/data/emailapp.sqlite"
+      API_TOKEN: "${API_TOKEN:-change-me-before-deploy}"
+    ports:
+      - "8080:8080"
+    volumes:
+      - emailapp-data:/data
+
+volumes:
+  emailapp-data:
+
