@@ -248,6 +248,57 @@ async fn start_batch_send(
     .map_err(|error| format!("批量发送任务异常：{error}"))?
 }
 
+#[tauri::command]
+async fn import_sent_records(
+    app: AppHandle,
+    config: AppConfig,
+    recipients: Vec<RecipientRow>,
+) -> Result<BatchSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        validate_sent_import_config(&config)?;
+        let mut summary = BatchSummary {
+            total: recipients.len(),
+            sent: 0,
+            skipped: 0,
+            failed: 0,
+        };
+
+        for row in recipients.iter() {
+            if !row.is_valid {
+                summary.failed += 1;
+                emit_progress(&app, row, "failed", "导入数据无效");
+                continue;
+            }
+
+            emit_progress(&app, row, "sending", "正在查询服务端已发记录");
+            let already_sent = check_server_sent(&config, &row.email)
+                .map_err(|error| format!("服务端查询失败，已暂停导入：{error}"))?;
+
+            if already_sent {
+                summary.skipped += 1;
+                emit_progress(&app, row, "skipped", "服务器中已存在该邮箱");
+                continue;
+            }
+
+            emit_progress(&app, row, "sending", "正在写入服务器已发名单");
+            match mark_server_sent(&config, row) {
+                Ok(()) => {
+                    summary.sent += 1;
+                    emit_progress(&app, row, "sent", "已导入服务器已发名单");
+                }
+                Err(error) => {
+                    summary.failed += 1;
+                    emit_progress(&app, row, "failed", &error);
+                }
+            }
+        }
+
+        Ok(summary)
+    })
+    .await
+    .map_err(|error| format!("已发名单导入任务异常：{error}"))?
+}
+
 fn parse_csv(path: &Path) -> Result<Vec<Vec<String>>, String> {
     let bytes = fs::read(path).map_err(|error| format!("读取 CSV 失败：{error}"))?;
     let content = String::from_utf8(bytes.clone()).unwrap_or_else(|_| {
@@ -416,12 +467,7 @@ fn is_valid_email(value: &str) -> bool {
 }
 
 fn validate_config(config: &AppConfig) -> Result<(), String> {
-    if config.server_url.trim().is_empty() {
-        return Err("服务端地址不能为空".to_string());
-    }
-    if config.api_token.trim().is_empty() {
-        return Err("API Token 不能为空".to_string());
-    }
+    validate_sent_import_config(config)?;
     if config.smtp_host.trim().is_empty() {
         return Err("SMTP 服务器不能为空".to_string());
     }
@@ -433,6 +479,28 @@ fn validate_config(config: &AppConfig) -> Result<(), String> {
     }
     if !is_valid_email(&config.from_email) {
         return Err("发件人邮箱无效".to_string());
+    }
+    Ok(())
+}
+
+fn validate_sent_import_config(config: &AppConfig) -> Result<(), String> {
+    if config.server_url.trim().is_empty() {
+        return Err("服务端地址不能为空".to_string());
+    }
+    if config.api_token.trim().is_empty() {
+        return Err("API Token 不能为空".to_string());
+    }
+    if config.branch_name.trim().is_empty() {
+        return Err("支行名不能为空".to_string());
+    }
+    if config.president_name.trim().is_empty() {
+        return Err("行长名不能为空".to_string());
+    }
+    if config.manager_name.trim().is_empty() {
+        return Err("客户经理姓名不能为空".to_string());
+    }
+    if config.manager_phone.trim().is_empty() {
+        return Err("客户经理电话不能为空".to_string());
     }
     Ok(())
 }
@@ -604,7 +672,8 @@ fn main() {
             parse_recipient_file,
             render_email_preview,
             send_test_email,
-            start_batch_send
+            start_batch_send,
+            import_sent_records
         ])
         .run(tauri::generate_context!())
         .expect("error while running EmailApp");

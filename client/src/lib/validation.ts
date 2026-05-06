@@ -27,6 +27,17 @@ export function getConfigWarnings(config: AppConfig) {
   return warnings;
 }
 
+export function getSentImportWarnings(config: AppConfig) {
+  const warnings: string[] = [];
+  if (!config.serverUrl.trim()) warnings.push('服务端地址不能为空');
+  if (!config.apiToken.trim()) warnings.push('API Token 不能为空');
+  if (!config.branchName.trim()) warnings.push('支行名不能为空');
+  if (!config.presidentName.trim()) warnings.push('行长名不能为空');
+  if (!config.managerName.trim()) warnings.push('客户经理姓名不能为空');
+  if (!config.managerPhone.trim()) warnings.push('客户经理电话不能为空');
+  return warnings;
+}
+
 export function getImportStats(rows: RecipientRow[]) {
   return {
     total: rows.length,
@@ -37,4 +48,3 @@ export function getImportStats(rows: RecipientRow[]) {
     failed: rows.filter((row) => row.status === 'failed').length
   };
 }
-

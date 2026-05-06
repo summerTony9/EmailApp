@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { isValidEmail, normalizeEmail } from './validation';
+import { DEFAULT_CONFIG } from './emailTemplate';
+import { getConfigWarnings, getSentImportWarnings, isValidEmail, normalizeEmail } from './validation';
 
 describe('email validation', () => {
   it('normalizes emails', () => {
@@ -12,3 +13,14 @@ describe('email validation', () => {
   });
 });
 
+describe('config warnings', () => {
+  it('does not require SMTP settings for importing historical sent records', () => {
+    const warnings = getSentImportWarnings({
+      ...DEFAULT_CONFIG,
+      apiToken: 'token'
+    });
+
+    expect(warnings).toEqual([]);
+    expect(getConfigWarnings({ ...DEFAULT_CONFIG, apiToken: 'token' })).toContain('SMTP 服务器不能为空');
+  });
+});

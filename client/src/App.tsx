@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import {
   AlertCircle,
   CheckCircle2,
+  Database,
   Download,
   FileSpreadsheet,
   Loader2,
@@ -20,7 +21,12 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { buildEmailPreview, DEFAULT_CONFIG, EMAIL_SUBJECT } from './lib/emailTemplate';
 import type { AppConfig, BatchSummary, RecipientRow, RowStatus, SendProgress } from './lib/types';
-import { getConfigWarnings, getImportStats, isValidEmail } from './lib/validation';
+import {
+  getConfigWarnings,
+  getImportStats,
+  getSentImportWarnings,
+  isValidEmail
+} from './lib/validation';
 
 function isTauriRuntime() {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -54,6 +60,7 @@ export default function App() {
   const [isParsing, setIsParsing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isImportingSent, setIsImportingSent] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [notice, setNotice] = useState('');
   const [summary, setSummary] = useState<BatchSummary | null>(null);
@@ -66,7 +73,14 @@ export default function App() {
     [config, firstValidRecipient]
   );
   const configWarnings = useMemo(() => getConfigWarnings(config), [config]);
-  const canStart = validRecipients.length > 0 && configWarnings.length === 0 && !isSending;
+  const sentImportWarnings = useMemo(() => getSentImportWarnings(config), [config]);
+  const canStart =
+    validRecipients.length > 0 && configWarnings.length === 0 && !isSending && !isImportingSent;
+  const canImportSent =
+    validRecipients.length > 0 &&
+    sentImportWarnings.length === 0 &&
+    !isSending &&
+    !isImportingSent;
 
   useEffect(() => {
     let isMounted = true;
@@ -218,6 +232,44 @@ export default function App() {
       setNotice(`批量发送暂停：${String(error)}`);
     } finally {
       setIsSending(false);
+    }
+  }
+
+  async function importSentRecords() {
+    if (!canImportSent) {
+      if (sentImportWarnings.length > 0) {
+        setNotice(`导入已发名单前请先补齐：${sentImportWarnings.join('；')}`);
+      }
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `即将把 ${validRecipients.length} 条有效邮箱写入服务器已发名单。这个操作不会发送邮件，确认继续？`
+    );
+    if (!confirmed) return;
+
+    setIsImportingSent(true);
+    setSummary(null);
+    setNotice('');
+    setRecipients((current) =>
+      current.map((row) =>
+        row.isValid ? { ...row, status: 'pending', message: '' } : { ...row, status: 'failed' }
+      )
+    );
+
+    try {
+      const result = await invoke<BatchSummary>('import_sent_records', {
+        config,
+        recipients: validRecipients
+      });
+      setSummary(result);
+      setNotice(
+        `已发名单导入完成：新增 ${result.sent} 条，已存在 ${result.skipped} 条，失败 ${result.failed} 条。`
+      );
+    } catch (error) {
+      setNotice(`已发名单导入暂停：${String(error)}`);
+    } finally {
+      setIsImportingSent(false);
     }
   }
 
@@ -436,7 +488,7 @@ export default function App() {
               <h2>名单与发送</h2>
             </div>
             <div className="toolbar-actions">
-              <button onClick={chooseFile} disabled={isParsing || isSending}>
+              <button onClick={chooseFile} disabled={isParsing || isSending || isImportingSent}>
                 {isParsing ? <Loader2 className="spin" size={16} /> : <Upload size={16} />}
                 导入名单
               </button>
@@ -524,6 +576,10 @@ export default function App() {
               {isTesting ? <Loader2 className="spin" size={16} /> : <TestTube2 size={16} />}
               发送测试
             </button>
+            <button className="ghost-button" onClick={importSentRecords} disabled={!canImportSent}>
+              {isImportingSent ? <Loader2 className="spin" size={16} /> : <Database size={16} />}
+              导入为已发
+            </button>
             <button className="primary-button" onClick={startBatchSend} disabled={!canStart}>
               {isSending ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
               开始批量发送
@@ -533,7 +589,7 @@ export default function App() {
           {summary ? (
             <div className="summary-line">
               <Send size={16} />
-              成功 {summary.sent} 封，跳过 {summary.skipped} 封，失败 {summary.failed} 封。
+              成功/新增 {summary.sent} 条，跳过 {summary.skipped} 条，失败 {summary.failed} 条。
             </div>
           ) : null}
         </section>
@@ -553,4 +609,3 @@ export default function App() {
     </main>
   );
 }
-
