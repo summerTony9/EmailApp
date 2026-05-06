@@ -15,12 +15,20 @@ import {
   Server,
   Settings,
   ShieldCheck,
+  Trash2,
   TestTube2,
   Upload
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { buildEmailPreview, DEFAULT_CONFIG, EMAIL_SUBJECT } from './lib/emailTemplate';
-import type { AppConfig, BatchSummary, RecipientRow, RowStatus, SendProgress } from './lib/types';
+import type {
+  AppConfig,
+  AppLog,
+  BatchSummary,
+  RecipientRow,
+  RowStatus,
+  SendProgress
+} from './lib/types';
 import {
   getConfigWarnings,
   getImportStats,
@@ -58,6 +66,15 @@ function defaultPortForEncryption(encryption: AppConfig['smtpEncryption']) {
   return 25;
 }
 
+function formatLogTime(timeMs: number) {
+  return new Date(timeMs).toLocaleTimeString('zh-CN', {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+}
+
 export default function App() {
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [recipients, setRecipients] = useState<RecipientRow[]>([]);
@@ -70,6 +87,7 @@ export default function App() {
   const [isTesting, setIsTesting] = useState(false);
   const [notice, setNotice] = useState('');
   const [summary, setSummary] = useState<BatchSummary | null>(null);
+  const [logs, setLogs] = useState<AppLog[]>([]);
 
   const stats = useMemo(() => getImportStats(recipients), [recipients]);
   const validRecipients = useMemo(() => recipients.filter((row) => row.isValid), [recipients]);
@@ -114,7 +132,8 @@ export default function App() {
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
-    let unlisten: (() => void) | undefined;
+    let unlistenProgress: (() => void) | undefined;
+    let unlistenLog: (() => void) | undefined;
     listen<SendProgress>('send-progress', (event) => {
       const progress = event.payload;
       setRecipients((current) =>
@@ -125,10 +144,16 @@ export default function App() {
         )
       );
     }).then((dispose) => {
-      unlisten = dispose;
+      unlistenProgress = dispose;
+    });
+    listen<AppLog>('app-log', (event) => {
+      setLogs((current) => [...current.slice(-299), event.payload]);
+    }).then((dispose) => {
+      unlistenLog = dispose;
     });
     return () => {
-      unlisten?.();
+      unlistenProgress?.();
+      unlistenLog?.();
     };
   }, []);
 
@@ -205,6 +230,7 @@ export default function App() {
     }
     setIsTesting(true);
     setNotice('');
+    setLogs([]);
     try {
       await invoke('send_test_email', {
         config,
@@ -229,6 +255,7 @@ export default function App() {
     setIsSending(true);
     setSummary(null);
     setNotice('');
+    setLogs([]);
     setRecipients((current) =>
       current.map((row) =>
         row.isValid ? { ...row, status: 'pending', message: '' } : { ...row, status: 'failed' }
@@ -265,6 +292,7 @@ export default function App() {
     setIsImportingSent(true);
     setSummary(null);
     setNotice('');
+    setLogs([]);
     setRecipients((current) =>
       current.map((row) =>
         row.isValid ? { ...row, status: 'pending', message: '' } : { ...row, status: 'failed' }
@@ -611,6 +639,32 @@ export default function App() {
               成功/新增 {summary.sent} 条，跳过 {summary.skipped} 条，失败 {summary.failed} 条。
             </div>
           ) : null}
+
+          <div className="log-panel">
+            <div className="log-toolbar">
+              <div className="section-heading compact">
+                <AlertCircle size={18} />
+                <h2>运行日志</h2>
+              </div>
+              <button className="ghost-button" onClick={() => setLogs([])} disabled={logs.length === 0}>
+                <Trash2 size={16} />
+                清空
+              </button>
+            </div>
+            <div className="log-list">
+              {logs.length === 0 ? (
+                <div className="empty-log">发送测试或批量任务开始后，这里会显示详细日志</div>
+              ) : (
+                logs.map((log) => (
+                  <div key={log.id} className={`log-row log-${log.level}`}>
+                    <span>{formatLogTime(log.timeMs)}</span>
+                    <strong>{log.level.toUpperCase()}</strong>
+                    <p>{log.message}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </section>
 
         <section className="preview-panel">

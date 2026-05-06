@@ -127,6 +127,7 @@ th {
 .toolbar,
 .toolbar-actions,
 .send-actions,
+.log-toolbar,
 .section-heading,
 .subject-pill,
 .notice,
@@ -366,6 +367,76 @@ th {
 
 .summary-line {
   margin-top: 12px;
+}
+
+.log-panel {
+  margin-top: 14px;
+  border: 1px solid #d7e0e7;
+  border-radius: 8px;
+  background: #f9fbfc;
+  overflow: hidden;
+}
+
+.log-toolbar {
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid #d7e0e7;
+}
+
+.log-toolbar .section-heading {
+  margin-bottom: 0;
+}
+
+.log-list {
+  height: 180px;
+  overflow: auto;
+  padding: 8px 10px;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  color: #26313d;
+}
+
+.empty-log {
+  color: #7a8898;
+  padding: 34px 8px;
+  text-align: center;
+}
+
+.log-row {
+  display: grid;
+  grid-template-columns: 72px 54px 1fr;
+  gap: 8px;
+  padding: 5px 2px;
+  border-bottom: 1px solid #e5ebf0;
+}
+
+.log-row:last-child {
+  border-bottom: 0;
+}
+
+.log-row span {
+  color: #687789;
+}
+
+.log-row strong {
+  color: #52606d;
+}
+
+.log-row p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.log-error strong,
+.log-error p {
+  color: #991b1b;
+}
+
+.log-warn strong,
+.log-warn p {
+  color: #92400e;
 }
 
 .preview-meta {

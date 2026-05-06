@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 
 const EMAIL_SUBJECT: &str = "知识产权贴息政策提示";
@@ -88,6 +88,15 @@ struct SendProgress {
     id: String,
     email: String,
     status: String,
+    message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppLog {
+    id: String,
+    time_ms: u64,
+    level: String,
     message: String,
 }
 
@@ -179,17 +188,45 @@ fn render_email_preview(company_name: String, config: AppConfig) -> EmailPreview
 
 #[tauri::command]
 async fn send_test_email(
+    app: AppHandle,
     config: AppConfig,
     recipient: String,
     sample_company_name: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        validate_config(&config)?;
+        emit_log(&app, "info", "开始发送测试邮件");
+        if let Err(error) = validate_config(&config) {
+            emit_log(&app, "error", &format!("配置校验失败：{error}"));
+            return Err(error);
+        }
         let email = normalize_email(&recipient);
         if !is_valid_email(&email) {
+            emit_log(&app, "error", "测试收件邮箱无效");
             return Err("测试收件邮箱无效".to_string());
         }
-        send_email(&config, &email, &sample_company_name)
+        emit_log(
+            &app,
+            "info",
+            &format!(
+                "SMTP 目标：{}:{}，加密方式：{}，账号：{}，发件人：{}，测试收件人：{}",
+                config.smtp_host,
+                config.smtp_port,
+                encryption_label(&effective_smtp_encryption(&config)),
+                mask_account(&config.smtp_username),
+                config.from_email,
+                email
+            ),
+        );
+        match send_email(&config, &email, &sample_company_name, Some(&app)) {
+            Ok(()) => {
+                emit_log(&app, "info", "测试邮件发送成功");
+                Ok(())
+            }
+            Err(error) => {
+                emit_log(&app, "error", &error);
+                Err(error)
+            }
+        }
     })
     .await
     .map_err(|error| format!("测试邮件任务异常：{error}"))?
@@ -228,7 +265,7 @@ async fn start_batch_send(
             }
 
             emit_progress(&app, row, "sending", "正在通过 SMTP 发送");
-            match send_email(&config, &row.email, &row.company_name) {
+            match send_email(&config, &row.email, &row.company_name, Some(&app)) {
                 Ok(()) => {
                     emit_progress(&app, row, "sending", "邮件已发送，正在写入服务端记录");
                     mark_server_sent(&config, row).map_err(|error| {
@@ -242,6 +279,7 @@ async fn start_batch_send(
                 }
                 Err(error) => {
                     summary.failed += 1;
+                    emit_log(&app, "error", &error);
                     emit_progress(&app, row, "failed", &error);
                 }
             }
@@ -559,11 +597,22 @@ fn fallback<'a>(value: &'a str, default_value: &'a str) -> &'a str {
     }
 }
 
-fn send_email(config: &AppConfig, recipient: &str, company_name: &str) -> Result<(), String> {
+fn send_email(
+    config: &AppConfig,
+    recipient: &str,
+    company_name: &str,
+    app: Option<&AppHandle>,
+) -> Result<(), String> {
+    if let Some(app) = app {
+        emit_log(app, "info", "正在渲染邮件模板");
+    }
     let preview = render_email(company_name, config);
     let from = mailbox(&config.from_email, Some(&config.from_name))?;
     let to = mailbox(recipient, None)?;
 
+    if let Some(app) = app {
+        emit_log(app, "info", "正在构建 MIME 邮件内容");
+    }
     let message = Message::builder()
         .from(from)
         .to(to)
@@ -573,17 +622,29 @@ fn send_email(config: &AppConfig, recipient: &str, company_name: &str) -> Result
                 .singlepart(SinglePart::plain(preview.text))
                 .singlepart(SinglePart::html(preview.html)),
         )
-        .map_err(|error| format!("构建邮件失败：{error}"))?;
+        .map_err(|error| format!("构建邮件失败：{}", detailed_error(&error)))?;
 
+    if let Some(app) = app {
+        emit_log(
+            app,
+            "info",
+            &format!(
+                "正在初始化 SMTP 传输：{}:{}，加密方式：{}",
+                config.smtp_host,
+                config.smtp_port,
+                encryption_label(&effective_smtp_encryption(config))
+            ),
+        );
+    }
     let credentials = Credentials::new(config.smtp_username.clone(), config.smtp_password.clone());
     let transport = match effective_smtp_encryption(config).as_str() {
         "tls" => SmtpTransport::relay(&config.smtp_host)
-            .map_err(|error| format!("SMTP SSL/TLS 配置失败：{error}"))?
+            .map_err(|error| format!("SMTP SSL/TLS 配置失败：{}", detailed_error(&error)))?
             .port(config.smtp_port)
             .credentials(credentials)
             .build(),
         "starttls" => SmtpTransport::starttls_relay(&config.smtp_host)
-            .map_err(|error| format!("SMTP STARTTLS 配置失败：{error}"))?
+            .map_err(|error| format!("SMTP STARTTLS 配置失败：{}", detailed_error(&error)))?
             .port(config.smtp_port)
             .credentials(credentials)
             .build(),
@@ -595,9 +656,12 @@ fn send_email(config: &AppConfig, recipient: &str, company_name: &str) -> Result
         _ => return Err("SMTP 加密方式无效".to_string()),
     };
 
+    if let Some(app) = app {
+        emit_log(app, "info", "正在连接 SMTP 并发送邮件");
+    }
     transport
         .send(&message)
-        .map_err(|error| format!("SMTP 发送失败：{error}"))?;
+        .map_err(|error| format!("SMTP 发送失败：{}", detailed_error(&error)))?;
     Ok(())
 }
 
@@ -694,6 +758,51 @@ fn emit_progress(app: &AppHandle, row: &RecipientRow, status: &str, message: &st
             message: message.to_string(),
         },
     );
+}
+
+fn emit_log(app: &AppHandle, level: &str, message: &str) {
+    let time_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let _ = app.emit(
+        "app-log",
+        AppLog {
+            id: format!("log-{time_ms}-{}", message.len()),
+            time_ms,
+            level: level.to_string(),
+            message: message.to_string(),
+        },
+    );
+}
+
+fn detailed_error(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut parts = vec![error.to_string()];
+    let mut current = error.source();
+    while let Some(source) = current {
+        parts.push(format!("caused by: {source}"));
+        current = source.source();
+    }
+    parts.push(format!("debug: {error:?}"));
+    parts.join(" | ")
+}
+
+fn encryption_label(value: &str) -> &'static str {
+    match value {
+        "tls" => "SSL/TLS",
+        "starttls" => "STARTTLS",
+        "none" => "不加密",
+        _ => "未知",
+    }
+}
+
+fn mask_account(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.len() <= 4 {
+        return "***".to_string();
+    }
+    let keep = trimmed.chars().take(3).collect::<String>();
+    format!("{keep}***")
 }
 
 fn main() {

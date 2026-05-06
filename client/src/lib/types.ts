@@ -42,6 +42,13 @@ export interface SendProgress {
   message: string;
 }
 
+export interface AppLog {
+  id: string;
+  timeMs: number;
+  level: 'info' | 'warn' | 'error';
+  message: string;
+}
+
 export interface BatchSummary {
   total: number;
   sent: number;
