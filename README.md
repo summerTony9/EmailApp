@@ -45,6 +45,27 @@ nano .env
 
 ```env
 API_TOKEN=replace-with-the-random-token
+HOST_PORT=8080
+```
+
+如果服务器提示 `address already in use`，说明宿主机端口被占用。先查看是谁占用了 8080：
+
+```bash
+sudo ss -ltnp | grep ':8080'
+docker ps --format 'table {{.Names}}\t{{.Ports}}'
+```
+
+如果不想停掉占用 8080 的服务，可以把 `.env` 改成：
+
+```env
+API_TOKEN=replace-with-the-random-token
+HOST_PORT=8081
+```
+
+然后桌面端的服务端地址也改成：
+
+```text
+http://43.156.180.151:8081
 ```
 
 启动服务：
@@ -57,8 +78,8 @@ docker compose up --build -d
 
 ```bash
 docker compose ps
-curl http://127.0.0.1:8080/health
-curl http://43.156.180.151:8080/health
+curl http://127.0.0.1:${HOST_PORT:-8080}/health
+curl http://43.156.180.151:${HOST_PORT:-8080}/health
 ```
 
 日常更新：

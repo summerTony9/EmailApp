@@ -10,10 +10,9 @@ services:
       DB_PATH: "/data/emailapp.sqlite"
       API_TOKEN: "${API_TOKEN:-change-me-before-deploy}"
     ports:
-      - "8080:8080"
+      - "${HOST_PORT:-8080}:8080"
     volumes:
       - emailapp-data:/data
 
 volumes:
   emailapp-data:
-
