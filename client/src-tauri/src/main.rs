@@ -8,6 +8,7 @@ use lettre::{Message, SmtpTransport, Transport};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::net::{IpAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -217,6 +218,7 @@ async fn send_test_email(
                 email
             ),
         );
+        emit_smtp_resolution(&app, &config);
         match send_email(&config, &email, &sample_company_name, Some(&app)) {
             Ok(()) => {
                 emit_log(&app, "info", "测试邮件发送成功");
@@ -774,6 +776,62 @@ fn emit_log(app: &AppHandle, level: &str, message: &str) {
             message: message.to_string(),
         },
     );
+}
+
+fn emit_smtp_resolution(app: &AppHandle, config: &AppConfig) {
+    let target = format!("{}:{}", config.smtp_host.trim(), config.smtp_port);
+    match target.to_socket_addrs() {
+        Ok(addrs) => {
+            let mut ips = Vec::new();
+            let mut has_fake_ip = false;
+            for addr in addrs {
+                let ip = addr.ip();
+                if !ips.contains(&ip) {
+                    if is_fake_ip(ip) {
+                        has_fake_ip = true;
+                    }
+                    ips.push(ip);
+                }
+            }
+
+            if ips.is_empty() {
+                emit_log(app, "warn", &format!("DNS 解析没有返回地址：{target}"));
+                return;
+            }
+
+            let ip_list = ips
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            emit_log(
+                app,
+                "info",
+                &format!("DNS 解析：{} -> {}", config.smtp_host.trim(), ip_list),
+            );
+
+            if has_fake_ip {
+                emit_log(
+                    app,
+                    "warn",
+                    "DNS 解析命中 198.18.0.0/15 Fake-IP/测试保留网段。若正在使用 Clash、Surge、代理或 VPN，请将 smtp.qq.com 设置为 DIRECT/真实 DNS，或临时关闭代理后重试。",
+                );
+            }
+        }
+        Err(error) => {
+            emit_log(app, "warn", &format!("DNS 解析失败：{target}，{error}"));
+        }
+    }
+}
+
+fn is_fake_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(value) => {
+            let octets = value.octets();
+            octets[0] == 198 && (octets[1] == 18 || octets[1] == 19)
+        }
+        IpAddr::V6(_) => false,
+    }
 }
 
 fn detailed_error(error: &(dyn std::error::Error + 'static)) -> String {
