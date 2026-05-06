@@ -52,6 +52,12 @@ function toNumber(value: string, fallback: number) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function defaultPortForEncryption(encryption: AppConfig['smtpEncryption']) {
+  if (encryption === 'tls') return 465;
+  if (encryption === 'starttls') return 587;
+  return 25;
+}
+
 export default function App() {
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [recipients, setRecipients] = useState<RecipientRow[]>([]);
@@ -130,6 +136,14 @@ export default function App() {
     setConfig((current) => ({
       ...current,
       [key]: value
+    }));
+  }
+
+  function updateSmtpEncryption(encryption: AppConfig['smtpEncryption']) {
+    setConfig((current) => ({
+      ...current,
+      smtpEncryption: encryption,
+      smtpPort: defaultPortForEncryption(encryption)
     }));
   }
 
@@ -364,23 +378,28 @@ export default function App() {
               />
             </label>
             <label>
-              端口
-              <input
-                value={config.smtpPort}
-                onChange={(event) => updateConfig('smtpPort', toNumber(event.target.value, 465))}
-                type="number"
-                min={1}
-              />
+              加密方式
+              <select
+                value={config.smtpEncryption}
+                onChange={(event) =>
+                  updateSmtpEncryption(event.target.value as AppConfig['smtpEncryption'])
+                }
+              >
+                <option value="tls">SSL/TLS（465）</option>
+                <option value="starttls">STARTTLS（587）</option>
+                <option value="none">不加密（25）</option>
+              </select>
             </label>
           </div>
 
-          <label className="checkbox-row">
+          <label>
+            端口
             <input
-              checked={config.smtpSecure}
-              onChange={(event) => updateConfig('smtpSecure', event.target.checked)}
-              type="checkbox"
+              value={config.smtpPort}
+              onChange={(event) => updateConfig('smtpPort', toNumber(event.target.value, 465))}
+              type="number"
+              min={1}
             />
-            使用 SSL/TLS
           </label>
 
           <label>

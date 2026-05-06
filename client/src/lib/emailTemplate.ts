@@ -7,7 +7,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   apiToken: '',
   smtpHost: '',
   smtpPort: 465,
-  smtpSecure: true,
+  smtpEncryption: 'tls',
   smtpUsername: '',
   smtpPassword: '',
   fromEmail: '',
@@ -56,4 +56,3 @@ export function buildEmailPreview(companyName: string, config: AppConfig): Email
     html: htmlLines.join('<br />')
   };
 }
-

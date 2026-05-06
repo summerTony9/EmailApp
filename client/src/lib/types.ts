@@ -5,7 +5,7 @@ export interface AppConfig {
   apiToken: string;
   smtpHost: string;
   smtpPort: number;
-  smtpSecure: boolean;
+  smtpEncryption: 'tls' | 'starttls' | 'none';
   smtpUsername: string;
   smtpPassword: string;
   fromEmail: string;
@@ -48,4 +48,3 @@ export interface BatchSummary {
   skipped: number;
   failed: number;
 }
-

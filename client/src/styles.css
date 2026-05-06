@@ -19,7 +19,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -52,7 +53,8 @@ button:disabled {
   opacity: 0.55;
 }
 
-input {
+input,
+select {
   width: 100%;
   border: 1px solid #cbd5df;
   border-radius: 8px;
@@ -62,7 +64,8 @@ input {
   outline: none;
 }
 
-input:focus {
+input:focus,
+select:focus {
   border-color: #2c7a7b;
   box-shadow: 0 0 0 3px rgba(44, 122, 123, 0.14);
 }
@@ -417,4 +420,3 @@ th {
     grid-column: 1 / -1;
   }
 }
-

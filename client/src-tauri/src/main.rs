@@ -3,6 +3,7 @@ use directories::ProjectDirs;
 use encoding_rs::GBK;
 use lettre::message::{Mailbox, MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
+use lettre::transport::smtp::client::Tls;
 use lettre::{Message, SmtpTransport, Transport};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -21,6 +22,9 @@ struct AppConfig {
     api_token: String,
     smtp_host: String,
     smtp_port: u16,
+    #[serde(default = "default_smtp_encryption")]
+    smtp_encryption: String,
+    #[serde(default)]
     smtp_secure: bool,
     smtp_username: String,
     smtp_password: String,
@@ -41,6 +45,7 @@ impl Default for AppConfig {
             api_token: String::new(),
             smtp_host: String::new(),
             smtp_port: 465,
+            smtp_encryption: "tls".to_string(),
             smtp_secure: true,
             smtp_username: String::new(),
             smtp_password: String::new(),
@@ -130,6 +135,10 @@ fn load_config() -> Result<AppConfig, String> {
     let config = serde_json::from_str::<AppConfig>(&content)
         .map_err(|error| format!("配置文件格式错误：{error}"))?;
     Ok(config)
+}
+
+fn default_smtp_encryption() -> String {
+    "tls".to_string()
 }
 
 #[tauri::command]
@@ -477,6 +486,12 @@ fn validate_config(config: &AppConfig) -> Result<(), String> {
     if config.smtp_password.trim().is_empty() {
         return Err("SMTP 密码不能为空".to_string());
     }
+    if !matches!(
+        effective_smtp_encryption(config).as_str(),
+        "tls" | "starttls" | "none"
+    ) {
+        return Err("SMTP 加密方式无效".to_string());
+    }
     if !is_valid_email(&config.from_email) {
         return Err("发件人邮箱无效".to_string());
     }
@@ -561,23 +576,41 @@ fn send_email(config: &AppConfig, recipient: &str, company_name: &str) -> Result
         .map_err(|error| format!("构建邮件失败：{error}"))?;
 
     let credentials = Credentials::new(config.smtp_username.clone(), config.smtp_password.clone());
-    let transport = if config.smtp_secure {
-        SmtpTransport::relay(&config.smtp_host)
-            .map_err(|error| format!("SMTP TLS 配置失败：{error}"))?
+    let transport = match effective_smtp_encryption(config).as_str() {
+        "tls" => SmtpTransport::relay(&config.smtp_host)
+            .map_err(|error| format!("SMTP SSL/TLS 配置失败：{error}"))?
             .port(config.smtp_port)
             .credentials(credentials)
-            .build()
-    } else {
-        SmtpTransport::builder_dangerous(&config.smtp_host)
+            .build(),
+        "starttls" => SmtpTransport::starttls_relay(&config.smtp_host)
+            .map_err(|error| format!("SMTP STARTTLS 配置失败：{error}"))?
             .port(config.smtp_port)
             .credentials(credentials)
-            .build()
+            .build(),
+        "none" => SmtpTransport::builder_dangerous(&config.smtp_host)
+            .port(config.smtp_port)
+            .tls(Tls::None)
+            .credentials(credentials)
+            .build(),
+        _ => return Err("SMTP 加密方式无效".to_string()),
     };
 
     transport
         .send(&message)
         .map_err(|error| format!("SMTP 发送失败：{error}"))?;
     Ok(())
+}
+
+fn effective_smtp_encryption(config: &AppConfig) -> String {
+    let value = config.smtp_encryption.trim().to_ascii_lowercase();
+    if matches!(value.as_str(), "tls" | "starttls" | "none") {
+        return value;
+    }
+    if config.smtp_secure {
+        "tls".to_string()
+    } else {
+        "none".to_string()
+    }
 }
 
 fn mailbox(email: &str, name: Option<&str>) -> Result<Mailbox, String> {
