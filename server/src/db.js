@@ -31,22 +31,40 @@ export function createDatabase(dbPath = process.env.DB_PATH || './data/emailapp.
 
     CREATE INDEX IF NOT EXISTS idx_sent_records_sent_at
       ON sent_records(sent_at);
+
+    CREATE TABLE IF NOT EXISTS sent_record_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sent_record_id INTEGER NOT NULL,
+      email TEXT NOT NULL,
+      company_name TEXT NOT NULL,
+      manager_name TEXT NOT NULL,
+      manager_phone TEXT NOT NULL,
+      branch_name TEXT NOT NULL,
+      president_name TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      sent_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      archived_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sent_record_history_email
+      ON sent_record_history(email);
+
+    CREATE INDEX IF NOT EXISTS idx_sent_record_history_sent_at
+      ON sent_record_history(sent_at);
   `);
   return db;
 }
 
 export function sentRecordExpirationCutoff(now = new Date()) {
-  return new Date(now.getTime() - SENT_RECORD_EXPIRATION_MS).toISOString();
+  return new Date(now.getTime() - SENT_RECORD_EXPIRATION_MS);
 }
 
-export function deleteExpiredSentRecords(db, now = new Date()) {
-  const cutoff = sentRecordExpirationCutoff(now);
-  const result = db.prepare(`
-    DELETE FROM sent_records
-    WHERE unixepoch(sent_at) IS NOT NULL
-      AND unixepoch(sent_at) <= unixepoch(?)
-  `).run(cutoff);
-  return result.changes;
+export function isSentRecordActive(row, now = new Date()) {
+  if (!row) return false;
+  const sentAt = Date.parse(row.sent_at);
+  if (Number.isNaN(sentAt)) return true;
+  return sentAt > sentRecordExpirationCutoff(now).getTime();
 }
 
 export function rowToRecord(row) {

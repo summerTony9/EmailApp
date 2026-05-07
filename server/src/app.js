@@ -2,7 +2,7 @@ import cors from '@fastify/cors';
 import Fastify from 'fastify';
 import {
   createDatabase,
-  deleteExpiredSentRecords,
+  isSentRecordActive,
   isValidEmail,
   normalizeEmail,
   rowToRecord
@@ -32,7 +32,74 @@ export function buildApp(options = {}) {
   });
   const db = options.db ?? createDatabase(options.dbPath);
   const apiToken = options.apiToken ?? process.env.API_TOKEN ?? 'change-me-before-deploy';
-  deleteExpiredSentRecords(db);
+  const findSentRecord = db.prepare('SELECT * FROM sent_records WHERE email = ?');
+  const archiveSentRecord = db.prepare(`
+    INSERT INTO sent_record_history (
+      sent_record_id,
+      email,
+      company_name,
+      manager_name,
+      manager_phone,
+      branch_name,
+      president_name,
+      subject,
+      sent_at,
+      created_at,
+      archived_at
+    ) VALUES (
+      @id,
+      @email,
+      @company_name,
+      @manager_name,
+      @manager_phone,
+      @branch_name,
+      @president_name,
+      @subject,
+      @sent_at,
+      @created_at,
+      @archivedAt
+    )
+  `);
+  const insertSentRecord = db.prepare(`
+    INSERT INTO sent_records (
+      email,
+      company_name,
+      manager_name,
+      manager_phone,
+      branch_name,
+      president_name,
+      subject,
+      sent_at
+    ) VALUES (
+      @email,
+      @companyName,
+      @managerName,
+      @managerPhone,
+      @branchName,
+      @presidentName,
+      @subject,
+      @sentAt
+    )
+  `);
+  const updateSentRecord = db.prepare(`
+    UPDATE sent_records
+    SET
+      company_name = @companyName,
+      manager_name = @managerName,
+      manager_phone = @managerPhone,
+      branch_name = @branchName,
+      president_name = @presidentName,
+      subject = @subject,
+      sent_at = @sentAt
+    WHERE email = @email
+  `);
+  const refreshExpiredSentRecord = db.transaction((existing, payload) => {
+    archiveSentRecord.run({
+      ...existing,
+      archivedAt: payload.sentAt
+    });
+    updateSentRecord.run(payload);
+  });
 
   app.register(cors, {
     origin: true
@@ -66,11 +133,11 @@ export function buildApp(options = {}) {
       });
     }
 
-    deleteExpiredSentRecords(db);
-    const row = db.prepare('SELECT * FROM sent_records WHERE email = ?').get(email);
+    const row = findSentRecord.get(email);
+    const sent = isSentRecordActive(row);
     return {
-      sent: Boolean(row),
-      record: rowToRecord(row)
+      sent,
+      record: sent ? rowToRecord(row) : null
     };
   });
 
@@ -94,40 +161,31 @@ export function buildApp(options = {}) {
       sentAt: new Date().toISOString()
     };
 
-    deleteExpiredSentRecords(db);
-    const existing = db.prepare('SELECT * FROM sent_records WHERE email = ?').get(email);
-    if (existing) {
+    const existing = findSentRecord.get(email);
+    if (isSentRecordActive(existing)) {
       return {
         created: false,
+        refreshed: false,
         record: rowToRecord(existing)
       };
     }
 
-    db.prepare(`
-      INSERT INTO sent_records (
-        email,
-        company_name,
-        manager_name,
-        manager_phone,
-        branch_name,
-        president_name,
-        subject,
-        sent_at
-      ) VALUES (
-        @email,
-        @companyName,
-        @managerName,
-        @managerPhone,
-        @branchName,
-        @presidentName,
-        @subject,
-        @sentAt
-      )
-    `).run(payload);
+    if (existing) {
+      refreshExpiredSentRecord(existing, payload);
+      const row = findSentRecord.get(email);
+      return {
+        created: false,
+        refreshed: true,
+        record: rowToRecord(row)
+      };
+    }
 
-    const row = db.prepare('SELECT * FROM sent_records WHERE email = ?').get(email);
+    insertSentRecord.run(payload);
+
+    const row = findSentRecord.get(email);
     return reply.code(201).send({
       created: true,
+      refreshed: false,
       record: rowToRecord(row)
     });
   });

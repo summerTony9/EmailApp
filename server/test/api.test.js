@@ -99,6 +99,7 @@ test('check -> sent -> check flow is idempotent by email', async () => {
   });
   assert.equal(created.statusCode, 201);
   assert.equal(created.json().created, true);
+  assert.equal(created.json().refreshed, false);
   assert.equal(created.json().record.email, 'demo@example.com');
 
   const duplicate = await app.inject({
@@ -109,6 +110,7 @@ test('check -> sent -> check flow is idempotent by email', async () => {
   });
   assert.equal(duplicate.statusCode, 200);
   assert.equal(duplicate.json().created, false);
+  assert.equal(duplicate.json().refreshed, false);
   assert.equal(duplicate.json().record.companyName, sentPayload.companyName);
 
   const secondCheck = await app.inject({
@@ -123,7 +125,7 @@ test('check -> sent -> check flow is idempotent by email', async () => {
   await app.close();
 });
 
-test('cleans existing expired records when the app starts', async () => {
+test('keeps existing expired records when the app starts', async () => {
   const db = createDatabase(':memory:');
   insertSentRecord(db, {
     email: sentPayload.email,
@@ -139,7 +141,7 @@ test('cleans existing expired records when the app starts', async () => {
   assert.equal(
     db.prepare('SELECT COUNT(*) AS count FROM sent_records WHERE email = ?').get('demo@example.com')
       .count,
-    0
+    1
   );
 
   await app.close();
@@ -166,7 +168,7 @@ test('expires sent records after 90 days so they can be sent again', async () =>
   assert.equal(
     db.prepare('SELECT COUNT(*) AS count FROM sent_records WHERE email = ?').get('demo@example.com')
       .count,
-    0
+    1
   );
 
   const refreshed = await app.inject({
@@ -175,9 +177,26 @@ test('expires sent records after 90 days so they can be sent again', async () =>
     headers: auth,
     payload: sentPayload
   });
-  assert.equal(refreshed.statusCode, 201);
-  assert.equal(refreshed.json().created, true);
+  assert.equal(refreshed.statusCode, 200);
+  assert.equal(refreshed.json().created, false);
+  assert.equal(refreshed.json().refreshed, true);
   assert.equal(refreshed.json().record.companyName, sentPayload.companyName);
+  assert.notEqual(refreshed.json().record.sentAt, expiredSentAt);
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS count FROM sent_records WHERE email = ?').get('demo@example.com')
+      .count,
+    1
+  );
+  assert.deepEqual(
+    db
+      .prepare('SELECT email, company_name, sent_at FROM sent_record_history WHERE email = ?')
+      .get('demo@example.com'),
+    {
+      email: 'demo@example.com',
+      company_name: '旧公司',
+      sent_at: expiredSentAt
+    }
+  );
 
   const secondCheck = await app.inject({
     method: 'POST',
