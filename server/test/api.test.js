@@ -1,14 +1,52 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildApp } from '../src/app.js';
-import { createDatabase, normalizeEmail } from '../src/db.js';
+import { createDatabase, normalizeEmail, SENT_RECORD_EXPIRATION_MS } from '../src/db.js';
 
-function createTestApp() {
-  return buildApp({
+function createTestContext() {
+  const db = createDatabase(':memory:');
+  const app = buildApp({
     logger: false,
     apiToken: 'test-token',
-    db: createDatabase(':memory:')
+    db
   });
+  return { app, db };
+}
+
+function createTestApp() {
+  return createTestContext().app;
+}
+
+function insertSentRecord(db, overrides = {}) {
+  const payload = {
+    ...sentPayload,
+    email: normalizeEmail(sentPayload.email),
+    sentAt: new Date().toISOString(),
+    ...overrides
+  };
+  payload.email = normalizeEmail(payload.email);
+
+  db.prepare(`
+    INSERT INTO sent_records (
+      email,
+      company_name,
+      manager_name,
+      manager_phone,
+      branch_name,
+      president_name,
+      subject,
+      sent_at
+    ) VALUES (
+      @email,
+      @companyName,
+      @managerName,
+      @managerPhone,
+      @branchName,
+      @presidentName,
+      @subject,
+      @sentAt
+    )
+  `).run(payload);
 }
 
 const auth = {
@@ -85,6 +123,74 @@ test('check -> sent -> check flow is idempotent by email', async () => {
   await app.close();
 });
 
+test('cleans existing expired records when the app starts', async () => {
+  const db = createDatabase(':memory:');
+  insertSentRecord(db, {
+    email: sentPayload.email,
+    sentAt: new Date(Date.now() - SENT_RECORD_EXPIRATION_MS - 1000).toISOString()
+  });
+
+  const app = buildApp({
+    logger: false,
+    apiToken: 'test-token',
+    db
+  });
+
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS count FROM sent_records WHERE email = ?').get('demo@example.com')
+      .count,
+    0
+  );
+
+  await app.close();
+});
+
+test('expires sent records after 90 days so they can be sent again', async () => {
+  const { app, db } = createTestContext();
+  const expiredSentAt = new Date(Date.now() - SENT_RECORD_EXPIRATION_MS - 1000).toISOString();
+  insertSentRecord(db, {
+    email: sentPayload.email,
+    companyName: '旧公司',
+    sentAt: expiredSentAt
+  });
+
+  const firstCheck = await app.inject({
+    method: 'POST',
+    url: '/api/check',
+    headers: auth,
+    payload: { email: sentPayload.email }
+  });
+  assert.equal(firstCheck.statusCode, 200);
+  assert.equal(firstCheck.json().sent, false);
+  assert.equal(firstCheck.json().record, null);
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS count FROM sent_records WHERE email = ?').get('demo@example.com')
+      .count,
+    0
+  );
+
+  const refreshed = await app.inject({
+    method: 'POST',
+    url: '/api/sent',
+    headers: auth,
+    payload: sentPayload
+  });
+  assert.equal(refreshed.statusCode, 201);
+  assert.equal(refreshed.json().created, true);
+  assert.equal(refreshed.json().record.companyName, sentPayload.companyName);
+
+  const secondCheck = await app.inject({
+    method: 'POST',
+    url: '/api/check',
+    headers: auth,
+    payload: { email: sentPayload.email }
+  });
+  assert.equal(secondCheck.statusCode, 200);
+  assert.equal(secondCheck.json().sent, true);
+
+  await app.close();
+});
+
 test('rejects invalid email payloads', async () => {
   const app = createTestApp();
   const response = await app.inject({
@@ -97,4 +203,3 @@ test('rejects invalid email payloads', async () => {
   assert.equal(response.statusCode, 400);
   await app.close();
 });
-

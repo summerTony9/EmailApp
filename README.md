@@ -12,6 +12,7 @@
 - 邮件主题：`知识产权贴息政策提示`
 - 邮件模板中 `1.2%` 会在 HTML 版本中加粗
 - SMTP 密码按需求明文保存在本机配置文件，不上传服务器
+- 服务端已发记录保留 90 天，超过 90 天会自动过期，之后同一邮箱可以再次发送
 
 ## 服务端部署
 
@@ -98,6 +99,8 @@ docker compose down
 ```
 
 服务端会把 SQLite 数据保存在 Docker volume `emailapp_emailapp-data` 中，重启或重新构建镜像不会清空已发记录。
+
+已发记录按 `sent_at` 计算 90 天有效期。更新到包含过期逻辑的版本后，不需要手动迁移数据库；服务启动以及后续 `/api/check`、`/api/sent` 请求会自动清理超过 90 天的旧记录。服务器里已有的邮箱会继续保留，只有 `sent_at` 已超过 90 天的记录会过期。
 
 本地开发部署步骤：
 
@@ -212,5 +215,5 @@ Authorization: Bearer <API_TOKEN>
 ```
 
 - `GET /health`
-- `POST /api/check`，body: `{ "email": "demo@example.com" }`
+- `POST /api/check`，body: `{ "email": "demo@example.com" }`，只会把 90 天内的已发记录判定为 `sent: true`
 - `POST /api/sent`，body: `{ "email": "...", "companyName": "...", "managerName": "...", "managerPhone": "...", "branchName": "...", "presidentName": "...", "subject": "..." }`

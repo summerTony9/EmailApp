@@ -1,6 +1,12 @@
 import cors from '@fastify/cors';
 import Fastify from 'fastify';
-import { createDatabase, isValidEmail, normalizeEmail, rowToRecord } from './db.js';
+import {
+  createDatabase,
+  deleteExpiredSentRecords,
+  isValidEmail,
+  normalizeEmail,
+  rowToRecord
+} from './db.js';
 
 const DEFAULT_SUBJECT = '知识产权贴息政策提示';
 
@@ -26,6 +32,7 @@ export function buildApp(options = {}) {
   });
   const db = options.db ?? createDatabase(options.dbPath);
   const apiToken = options.apiToken ?? process.env.API_TOKEN ?? 'change-me-before-deploy';
+  deleteExpiredSentRecords(db);
 
   app.register(cors, {
     origin: true
@@ -59,6 +66,7 @@ export function buildApp(options = {}) {
       });
     }
 
+    deleteExpiredSentRecords(db);
     const row = db.prepare('SELECT * FROM sent_records WHERE email = ?').get(email);
     return {
       sent: Boolean(row),
@@ -86,6 +94,7 @@ export function buildApp(options = {}) {
       sentAt: new Date().toISOString()
     };
 
+    deleteExpiredSentRecords(db);
     const existing = db.prepare('SELECT * FROM sent_records WHERE email = ?').get(email);
     if (existing) {
       return {

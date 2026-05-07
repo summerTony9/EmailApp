@@ -1,5 +1,8 @@
 import Database from 'better-sqlite3';
 
+export const SENT_RECORD_EXPIRATION_DAYS = 90;
+export const SENT_RECORD_EXPIRATION_MS = SENT_RECORD_EXPIRATION_DAYS * 24 * 60 * 60 * 1000;
+
 export function normalizeEmail(email) {
   return String(email ?? '').trim().toLowerCase();
 }
@@ -32,6 +35,20 @@ export function createDatabase(dbPath = process.env.DB_PATH || './data/emailapp.
   return db;
 }
 
+export function sentRecordExpirationCutoff(now = new Date()) {
+  return new Date(now.getTime() - SENT_RECORD_EXPIRATION_MS).toISOString();
+}
+
+export function deleteExpiredSentRecords(db, now = new Date()) {
+  const cutoff = sentRecordExpirationCutoff(now);
+  const result = db.prepare(`
+    DELETE FROM sent_records
+    WHERE unixepoch(sent_at) IS NOT NULL
+      AND unixepoch(sent_at) <= unixepoch(?)
+  `).run(cutoff);
+  return result.changes;
+}
+
 export function rowToRecord(row) {
   if (!row) return null;
   return {
@@ -47,4 +64,3 @@ export function rowToRecord(row) {
     createdAt: row.created_at
   };
 }
-
