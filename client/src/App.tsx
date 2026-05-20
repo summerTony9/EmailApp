@@ -60,6 +60,12 @@ function toNumber(value: string, fallback: number) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function toNonNegativeInteger(value: string, fallback: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.floor(parsed));
+}
+
 function defaultPortForEncryption(encryption: AppConfig['smtpEncryption']) {
   if (encryption === 'tls') return 465;
   if (encryption === 'starttls') return 587;
@@ -247,8 +253,13 @@ export default function App() {
 
   async function startBatchSend() {
     if (!canStart) return;
+    const sendLimit = Math.max(0, Math.floor(config.sendLimitPerBatch || 0));
+    const sendLimitText =
+      sendLimit > 0
+        ? `本次最多实际发送 ${sendLimit} 封，已发跳过不占额度。`
+        : '本次不限制实际发送封数。';
     const confirmed = window.confirm(
-      `即将按邮箱去重后单线程发送 ${validRecipients.length} 封邮件，每封间隔 ${config.sendIntervalSeconds} 秒。确认开始？`
+      `即将按邮箱去重后单线程处理 ${validRecipients.length} 条有效记录，每封间隔 ${config.sendIntervalSeconds} 秒。${sendLimitText}确认开始？`
     );
     if (!confirmed) return;
 
@@ -268,7 +279,11 @@ export default function App() {
         recipients: validRecipients
       });
       setSummary(result);
-      setNotice(`批量任务结束：成功 ${result.sent}，跳过 ${result.skipped}，失败 ${result.failed}。`);
+      setNotice(
+        `批量任务结束：成功 ${result.sent}，跳过 ${result.skipped}，失败 ${result.failed}。${
+          result.limitReached ? `已达到本次发送上限 ${sendLimit} 封，可再次点击继续发送。` : ''
+        }`
+      );
     } catch (error) {
       setNotice(`批量发送暂停：${String(error)}`);
     } finally {
@@ -497,6 +512,18 @@ export default function App() {
               />
             </label>
           </div>
+          <label>
+            每次发送上限（0 不限制）
+            <input
+              value={config.sendLimitPerBatch}
+              onChange={(event) =>
+                updateConfig('sendLimitPerBatch', toNonNegativeInteger(event.target.value, 0))
+              }
+              type="number"
+              min={0}
+              step={1}
+            />
+          </label>
           <div className="field-row">
             <label>
               客户经理
@@ -637,6 +664,7 @@ export default function App() {
             <div className="summary-line">
               <Send size={16} />
               成功/新增 {summary.sent} 条，跳过 {summary.skipped} 条，失败 {summary.failed} 条。
+              {summary.limitReached ? ' 已达到本次发送上限。' : ''}
             </div>
           ) : null}
 

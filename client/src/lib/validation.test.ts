@@ -23,4 +23,13 @@ describe('config warnings', () => {
     expect(warnings).toEqual([]);
     expect(getConfigWarnings({ ...DEFAULT_CONFIG, apiToken: 'token' })).toContain('SMTP 服务器不能为空');
   });
+
+  it('rejects negative per-batch send limits', () => {
+    const warnings = getConfigWarnings({
+      ...DEFAULT_CONFIG,
+      sendLimitPerBatch: -1
+    });
+
+    expect(warnings).toContain('每次发送上限不能小于 0');
+  });
 });

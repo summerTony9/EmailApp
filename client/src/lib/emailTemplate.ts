@@ -17,6 +17,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   managerName: '路悦醍',
   managerPhone: '19935493819',
   sendIntervalSeconds: 3,
+  sendLimitPerBatch: 0,
   testRecipient: ''
 };
 

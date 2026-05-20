@@ -24,6 +24,9 @@ export function getConfigWarnings(config: AppConfig) {
   if (!Number.isFinite(config.sendIntervalSeconds) || config.sendIntervalSeconds < 0) {
     warnings.push('发送间隔不能小于 0 秒');
   }
+  if (!Number.isFinite(config.sendLimitPerBatch) || config.sendLimitPerBatch < 0) {
+    warnings.push('每次发送上限不能小于 0');
+  }
   return warnings;
 }
 

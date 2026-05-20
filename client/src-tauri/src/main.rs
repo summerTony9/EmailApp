@@ -36,6 +36,8 @@ struct AppConfig {
     manager_name: String,
     manager_phone: String,
     send_interval_seconds: u64,
+    #[serde(default)]
+    send_limit_per_batch: u64,
     test_recipient: String,
 }
 
@@ -57,6 +59,7 @@ impl Default for AppConfig {
             manager_name: "路悦醍".to_string(),
             manager_phone: "19935493819".to_string(),
             send_interval_seconds: 3,
+            send_limit_per_batch: 0,
             test_recipient: String::new(),
         }
     }
@@ -108,6 +111,7 @@ struct BatchSummary {
     sent: usize,
     skipped: usize,
     failed: usize,
+    limit_reached: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -247,7 +251,9 @@ async fn start_batch_send(
             sent: 0,
             skipped: 0,
             failed: 0,
+            limit_reached: false,
         };
+        let send_limit = config.send_limit_per_batch as usize;
 
         for (index, row) in recipients.iter().enumerate() {
             if !row.is_valid {
@@ -286,6 +292,20 @@ async fn start_batch_send(
                 }
             }
 
+            if send_limit > 0 && summary.sent >= send_limit {
+                if index + 1 < recipients.len() {
+                    summary.limit_reached = true;
+                    emit_log(
+                        &app,
+                        "info",
+                        &format!(
+                            "已达到本次发送上限 {send_limit} 封，剩余名单可再次点击发送继续处理"
+                        ),
+                    );
+                }
+                break;
+            }
+
             if index + 1 < recipients.len() && config.send_interval_seconds > 0 {
                 thread::sleep(Duration::from_secs(config.send_interval_seconds));
             }
@@ -310,6 +330,7 @@ async fn import_sent_records(
             sent: 0,
             skipped: 0,
             failed: 0,
+            limit_reached: false,
         };
 
         for row in recipients.iter() {

@@ -15,6 +15,7 @@ export interface AppConfig {
   managerName: string;
   managerPhone: string;
   sendIntervalSeconds: number;
+  sendLimitPerBatch: number;
   testRecipient: string;
 }
 
@@ -54,4 +55,5 @@ export interface BatchSummary {
   sent: number;
   skipped: number;
   failed: number;
+  limitReached: boolean;
 }
