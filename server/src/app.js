@@ -8,7 +8,7 @@ import {
   rowToRecord
 } from './db.js';
 
-const DEFAULT_SUBJECT = '知识产权贴息政策提示';
+const DEFAULT_SUBJECT = '知识产权质押融资服务提示';
 
 function requiredText(value, fieldName) {
   const text = String(value ?? '').trim();

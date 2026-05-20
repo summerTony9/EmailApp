@@ -60,7 +60,7 @@ const sentPayload = {
   managerPhone: '19935493819',
   branchName: '交通银行北京中关村园区支行',
   presidentName: '杨诺',
-  subject: '知识产权贴息政策提示'
+  subject: '知识产权质押融资服务提示'
 };
 
 test('normalizes email addresses consistently', () => {

@@ -350,7 +350,7 @@ export default function App() {
       <header className="topbar">
         <div>
           <h1>EmailApp</h1>
-          <p>知识产权贴息政策批量邮件工作台</p>
+          <p>知识产权质押融资批量邮件工作台</p>
         </div>
         <div className="topbar-actions">
           <span className="subject-pill">
