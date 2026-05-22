@@ -15,6 +15,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 
 const EMAIL_SUBJECT: &str = "知识产权质押融资服务提示";
+const SERVER_REQUEST_RETRIES: usize = 3;
+const SERVER_REQUEST_RETRY_DELAY_SECS: u64 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -254,6 +256,7 @@ async fn start_batch_send(
             limit_reached: false,
         };
         let send_limit = config.send_limit_per_batch as usize;
+        let mut smtp_sent_this_batch = 0usize;
 
         for (index, row) in recipients.iter().enumerate() {
             if !row.is_valid {
@@ -263,8 +266,17 @@ async fn start_batch_send(
             }
 
             emit_progress(&app, row, "sending", "正在查询服务端去重记录");
-            let already_sent = check_server_sent(&config, &row.email)
-                .map_err(|error| format!("服务端查询失败，已暂停任务：{error}"))?;
+            let already_sent = match check_server_sent(&config, &row.email) {
+                Ok(already_sent) => already_sent,
+                Err(error) => {
+                    let message =
+                        format!("服务端查询失败，已跳过该条并继续下一条：{error}");
+                    summary.failed += 1;
+                    emit_log(&app, "error", &format!("{}：{message}", row.email));
+                    emit_progress(&app, row, "failed", &message);
+                    continue;
+                }
+            };
 
             if already_sent {
                 summary.skipped += 1;
@@ -275,15 +287,22 @@ async fn start_batch_send(
             emit_progress(&app, row, "sending", "正在通过 SMTP 发送");
             match send_email(&config, &row.email, &row.company_name, Some(&app)) {
                 Ok(()) => {
+                    smtp_sent_this_batch += 1;
                     emit_progress(&app, row, "sending", "邮件已发送，正在写入服务端记录");
-                    mark_server_sent(&config, row).map_err(|error| {
-                        format!(
-                            "{} 的邮件已发送，但写入服务端失败，已暂停任务：{error}",
-                            row.email
-                        )
-                    })?;
-                    summary.sent += 1;
-                    emit_progress(&app, row, "sent", "SMTP 成功，服务端已记录");
+                    match mark_server_sent(&config, row) {
+                        Ok(()) => {
+                            summary.sent += 1;
+                            emit_progress(&app, row, "sent", "SMTP 成功，服务端已记录");
+                        }
+                        Err(error) => {
+                            let message = format!(
+                                "邮件已通过 SMTP 发送，但写入服务端失败，已跳过该条并继续下一条：{error}"
+                            );
+                            summary.failed += 1;
+                            emit_log(&app, "error", &format!("{}：{message}", row.email));
+                            emit_progress(&app, row, "failed", &message);
+                        }
+                    }
                 }
                 Err(error) => {
                     summary.failed += 1;
@@ -292,7 +311,7 @@ async fn start_batch_send(
                 }
             }
 
-            if send_limit > 0 && summary.sent >= send_limit {
+            if send_limit > 0 && smtp_sent_this_batch >= send_limit {
                 if index + 1 < recipients.len() {
                     summary.limit_reached = true;
                     emit_log(
@@ -341,8 +360,16 @@ async fn import_sent_records(
             }
 
             emit_progress(&app, row, "sending", "正在查询服务端已发记录");
-            let already_sent = check_server_sent(&config, &row.email)
-                .map_err(|error| format!("服务端查询失败，已暂停导入：{error}"))?;
+            let already_sent = match check_server_sent(&config, &row.email) {
+                Ok(already_sent) => already_sent,
+                Err(error) => {
+                    let message = format!("服务端查询失败，已跳过该条并继续下一条：{error}");
+                    summary.failed += 1;
+                    emit_log(&app, "error", &format!("{}：{message}", row.email));
+                    emit_progress(&app, row, "failed", &message);
+                    continue;
+                }
+            };
 
             if already_sent {
                 summary.skipped += 1;
@@ -357,6 +384,11 @@ async fn import_sent_records(
                     emit_progress(&app, row, "sent", "已导入服务器已发名单");
                 }
                 Err(error) => {
+                    emit_log(
+                        &app,
+                        "error",
+                        &format!("{}：写入服务器已发名单失败：{error}", row.email),
+                    );
                     summary.failed += 1;
                     emit_progress(&app, row, "failed", &error);
                 }
@@ -732,49 +764,76 @@ fn mailbox(email: &str, name: Option<&str>) -> Result<Mailbox, String> {
     }
 }
 
-fn check_server_sent(config: &AppConfig, email: &str) -> Result<bool, String> {
-    let client = http_client()?;
-    let response = client
-        .post(api_url(config, "/api/check"))
-        .bearer_auth(config.api_token.trim())
-        .json(&serde_json::json!({ "email": normalize_email(email) }))
-        .send()
-        .map_err(|error| format!("请求 /api/check 失败：{error}"))?;
+fn retry_server_request<T, F>(operation: &str, mut request: F) -> Result<T, String>
+where
+    F: FnMut() -> Result<T, String>,
+{
+    let mut last_error = String::new();
 
-    if !response.status().is_success() {
-        return Err(format!("服务端返回 HTTP {}", response.status()));
+    for attempt in 0..=SERVER_REQUEST_RETRIES {
+        match request() {
+            Ok(value) => return Ok(value),
+            Err(error) => {
+                last_error = error;
+                if attempt < SERVER_REQUEST_RETRIES {
+                    thread::sleep(Duration::from_secs(SERVER_REQUEST_RETRY_DELAY_SECS));
+                }
+            }
+        }
     }
 
-    let payload = response
-        .json::<CheckResponse>()
-        .map_err(|error| format!("解析 /api/check 响应失败：{error}"))?;
-    Ok(payload.sent)
+    Err(format!(
+        "{operation} 已重试 {SERVER_REQUEST_RETRIES} 次仍失败：{last_error}"
+    ))
+}
+
+fn check_server_sent(config: &AppConfig, email: &str) -> Result<bool, String> {
+    retry_server_request("请求 /api/check", || {
+        let client = http_client()?;
+        let response = client
+            .post(api_url(config, "/api/check"))
+            .bearer_auth(config.api_token.trim())
+            .json(&serde_json::json!({ "email": normalize_email(email) }))
+            .send()
+            .map_err(|error| format!("请求 /api/check 失败：{error}"))?;
+
+        if !response.status().is_success() {
+            return Err(format!("服务端返回 HTTP {}", response.status()));
+        }
+
+        let payload = response
+            .json::<CheckResponse>()
+            .map_err(|error| format!("解析 /api/check 响应失败：{error}"))?;
+        Ok(payload.sent)
+    })
 }
 
 fn mark_server_sent(config: &AppConfig, row: &RecipientRow) -> Result<(), String> {
-    let client = http_client()?;
-    let payload = SentPayload {
-        email: &row.email,
-        company_name: &row.company_name,
-        manager_name: &config.manager_name,
-        manager_phone: &config.manager_phone,
-        branch_name: &config.branch_name,
-        president_name: &config.president_name,
-        subject: EMAIL_SUBJECT,
-    };
+    retry_server_request("请求 /api/sent", || {
+        let client = http_client()?;
+        let payload = SentPayload {
+            email: &row.email,
+            company_name: &row.company_name,
+            manager_name: &config.manager_name,
+            manager_phone: &config.manager_phone,
+            branch_name: &config.branch_name,
+            president_name: &config.president_name,
+            subject: EMAIL_SUBJECT,
+        };
 
-    let response = client
-        .post(api_url(config, "/api/sent"))
-        .bearer_auth(config.api_token.trim())
-        .json(&payload)
-        .send()
-        .map_err(|error| format!("请求 /api/sent 失败：{error}"))?;
+        let response = client
+            .post(api_url(config, "/api/sent"))
+            .bearer_auth(config.api_token.trim())
+            .json(&payload)
+            .send()
+            .map_err(|error| format!("请求 /api/sent 失败：{error}"))?;
 
-    if !response.status().is_success() {
-        return Err(format!("服务端返回 HTTP {}", response.status()));
-    }
+        if !response.status().is_success() {
+            return Err(format!("服务端返回 HTTP {}", response.status()));
+        }
 
-    Ok(())
+        Ok(())
+    })
 }
 
 fn http_client() -> Result<reqwest::blocking::Client, String> {
