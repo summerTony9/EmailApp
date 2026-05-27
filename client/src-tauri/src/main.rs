@@ -10,13 +10,18 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::net::{IpAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, State};
 
 const EMAIL_SUBJECT: &str = "知识产权质押融资服务提示";
 const SERVER_REQUEST_RETRIES: usize = 3;
 const SERVER_REQUEST_RETRY_DELAY_SECS: u64 = 2;
+const BATCH_CONTROL_POLL_INTERVAL_MS: u64 = 200;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -114,6 +119,7 @@ struct BatchSummary {
     skipped: usize,
     failed: usize,
     limit_reached: bool,
+    stopped: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,6 +137,82 @@ struct SentPayload<'a> {
     branch_name: &'a str,
     president_name: &'a str,
     subject: &'a str,
+}
+
+#[derive(Clone)]
+struct BatchControlHandle {
+    inner: Arc<BatchControlState>,
+}
+
+struct BatchControlState {
+    paused: AtomicBool,
+    stopped: AtomicBool,
+}
+
+impl Default for BatchControlHandle {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(BatchControlState {
+                paused: AtomicBool::new(false),
+                stopped: AtomicBool::new(false),
+            }),
+        }
+    }
+}
+
+impl BatchControlHandle {
+    fn reset(&self) {
+        self.inner.paused.store(false, Ordering::SeqCst);
+        self.inner.stopped.store(false, Ordering::SeqCst);
+    }
+
+    fn pause(&self) {
+        self.inner.paused.store(true, Ordering::SeqCst);
+    }
+
+    fn resume(&self) {
+        self.inner.paused.store(false, Ordering::SeqCst);
+    }
+
+    fn stop(&self) {
+        self.inner.stopped.store(true, Ordering::SeqCst);
+        self.inner.paused.store(false, Ordering::SeqCst);
+    }
+
+    fn is_paused(&self) -> bool {
+        self.inner.paused.load(Ordering::SeqCst)
+    }
+
+    fn is_stopped(&self) -> bool {
+        self.inner.stopped.load(Ordering::SeqCst)
+    }
+
+    fn wait_if_paused(&self, app: &AppHandle) -> bool {
+        let mut logged_pause = false;
+        while self.is_paused() && !self.is_stopped() {
+            if !logged_pause {
+                emit_log(app, "info", "批量任务已暂停，等待继续");
+                logged_pause = true;
+            }
+            thread::sleep(Duration::from_millis(BATCH_CONTROL_POLL_INTERVAL_MS));
+        }
+        self.is_stopped()
+    }
+
+    fn sleep_with_control(&self, app: &AppHandle, seconds: u64) -> bool {
+        let mut remaining = Duration::from_secs(seconds);
+        while remaining > Duration::from_millis(0) {
+            if self.wait_if_paused(app) || self.is_stopped() {
+                return true;
+            }
+
+            let step = remaining.min(Duration::from_millis(BATCH_CONTROL_POLL_INTERVAL_MS));
+            thread::sleep(step);
+            remaining = remaining.saturating_sub(step);
+        }
+
+        self.is_stopped()
+    }
 }
 
 fn config_path() -> Result<PathBuf, String> {
@@ -243,9 +325,12 @@ async fn send_test_email(
 #[tauri::command]
 async fn start_batch_send(
     app: AppHandle,
+    control: State<'_, BatchControlHandle>,
     config: AppConfig,
     recipients: Vec<RecipientRow>,
 ) -> Result<BatchSummary, String> {
+    let control = control.inner().clone();
+    control.reset();
     tauri::async_runtime::spawn_blocking(move || {
         validate_config(&config)?;
         let mut summary = BatchSummary {
@@ -254,11 +339,17 @@ async fn start_batch_send(
             skipped: 0,
             failed: 0,
             limit_reached: false,
+            stopped: false,
         };
         let send_limit = config.send_limit_per_batch as usize;
         let mut smtp_sent_this_batch = 0usize;
 
         for (index, row) in recipients.iter().enumerate() {
+            if control.wait_if_paused(&app) {
+                summary.stopped = true;
+                break;
+            }
+
             if !row.is_valid {
                 summary.failed += 1;
                 emit_progress(&app, row, "failed", "导入数据无效");
@@ -311,6 +402,11 @@ async fn start_batch_send(
                 }
             }
 
+            if control.is_stopped() {
+                summary.stopped = true;
+                break;
+            }
+
             if send_limit > 0 && smtp_sent_this_batch >= send_limit {
                 if index + 1 < recipients.len() {
                     summary.limit_reached = true;
@@ -326,14 +422,46 @@ async fn start_batch_send(
             }
 
             if index + 1 < recipients.len() && config.send_interval_seconds > 0 {
-                thread::sleep(Duration::from_secs(config.send_interval_seconds));
+                if control.sleep_with_control(&app, config.send_interval_seconds) {
+                    summary.stopped = true;
+                    break;
+                }
             }
+        }
+
+        if summary.stopped {
+            emit_log(
+                &app,
+                "warn",
+                "批量任务已停止，剩余名单保持待发送，可再次点击开始继续",
+            );
         }
 
         Ok(summary)
     })
     .await
     .map_err(|error| format!("批量发送任务异常：{error}"))?
+}
+
+#[tauri::command]
+fn pause_batch_send(app: AppHandle, control: State<'_, BatchControlHandle>) -> Result<(), String> {
+    control.inner().pause();
+    emit_log(&app, "warn", "已请求暂停，当前正在处理的邮件完成后会暂停");
+    Ok(())
+}
+
+#[tauri::command]
+fn resume_batch_send(app: AppHandle, control: State<'_, BatchControlHandle>) -> Result<(), String> {
+    control.inner().resume();
+    emit_log(&app, "info", "批量任务已继续");
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_batch_send(app: AppHandle, control: State<'_, BatchControlHandle>) -> Result<(), String> {
+    control.inner().stop();
+    emit_log(&app, "warn", "已请求停止，当前正在处理的邮件完成后会停止");
+    Ok(())
 }
 
 #[tauri::command]
@@ -350,6 +478,7 @@ async fn import_sent_records(
             skipped: 0,
             failed: 0,
             limit_reached: false,
+            stopped: false,
         };
 
         for row in recipients.iter() {
@@ -963,6 +1092,7 @@ fn mask_account(value: &str) -> String {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .manage(BatchControlHandle::default())
         .invoke_handler(tauri::generate_handler![
             load_config,
             save_config,
@@ -970,6 +1100,9 @@ fn main() {
             render_email_preview,
             send_test_email,
             start_batch_send,
+            pause_batch_send,
+            resume_batch_send,
+            stop_batch_send,
             import_sent_records
         ])
         .run(tauri::generate_context!())

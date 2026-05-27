@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from './emailTemplate';
-import { getConfigWarnings, getSentImportWarnings, isValidEmail, normalizeEmail } from './validation';
+import type { RecipientRow } from './types';
+import {
+  getConfigWarnings,
+  getRunnableRecipients,
+  getSentImportWarnings,
+  isValidEmail,
+  normalizeEmail
+} from './validation';
 
 describe('email validation', () => {
   it('normalizes emails', () => {
@@ -31,5 +38,28 @@ describe('config warnings', () => {
     });
 
     expect(warnings).toContain('每次发送上限不能小于 0');
+  });
+});
+
+describe('runnable recipients', () => {
+  it('continues from unfinished valid rows', () => {
+    const baseRow: RecipientRow = {
+      id: 'row-1',
+      rowNumber: 1,
+      companyName: '测试企业',
+      email: 'demo@example.com',
+      isValid: true,
+      errors: [],
+      status: 'pending'
+    };
+    const rows: RecipientRow[] = [
+      { ...baseRow, id: 'sent', status: 'sent' },
+      { ...baseRow, id: 'skipped', status: 'skipped' },
+      { ...baseRow, id: 'failed', status: 'failed' },
+      { ...baseRow, id: 'pending', status: 'pending' },
+      { ...baseRow, id: 'invalid', isValid: false, status: 'failed' }
+    ];
+
+    expect(getRunnableRecipients(rows).map((row) => row.id)).toEqual(['failed', 'pending']);
   });
 });

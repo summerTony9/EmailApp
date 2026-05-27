@@ -56,4 +56,5 @@ export interface BatchSummary {
   skipped: number;
   failed: number;
   limitReached: boolean;
+  stopped: boolean;
 }

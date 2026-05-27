@@ -9,12 +9,14 @@ import {
   FileSpreadsheet,
   Loader2,
   Mail,
+  Pause,
   Play,
   Save,
   Send,
   Server,
   Settings,
   ShieldCheck,
+  Square,
   Trash2,
   TestTube2,
   Upload
@@ -32,6 +34,7 @@ import type {
 import {
   getConfigWarnings,
   getImportStats,
+  getRunnableRecipients,
   getSentImportWarnings,
   isValidEmail
 } from './lib/validation';
@@ -89,6 +92,8 @@ export default function App() {
   const [isParsing, setIsParsing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
   const [isImportingSent, setIsImportingSent] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [notice, setNotice] = useState('');
@@ -97,6 +102,11 @@ export default function App() {
 
   const stats = useMemo(() => getImportStats(recipients), [recipients]);
   const validRecipients = useMemo(() => recipients.filter((row) => row.isValid), [recipients]);
+  const runnableRecipients = useMemo(() => getRunnableRecipients(recipients), [recipients]);
+  const nextRunnableRecipient = runnableRecipients[0];
+  const nextRunnableOrdinal = nextRunnableRecipient
+    ? validRecipients.findIndex((row) => row.id === nextRunnableRecipient.id) + 1
+    : 0;
   const firstValidRecipient = validRecipients[0];
   const preview = useMemo(
     () => buildEmailPreview(firstValidRecipient?.companyName || '北京创谱科技有限公司', config),
@@ -105,7 +115,7 @@ export default function App() {
   const configWarnings = useMemo(() => getConfigWarnings(config), [config]);
   const sentImportWarnings = useMemo(() => getSentImportWarnings(config), [config]);
   const canStart =
-    validRecipients.length > 0 && configWarnings.length === 0 && !isSending && !isImportingSent;
+    runnableRecipients.length > 0 && configWarnings.length === 0 && !isSending && !isImportingSent;
   const canImportSent =
     validRecipients.length > 0 &&
     sentImportWarnings.length === 0 &&
@@ -258,36 +268,85 @@ export default function App() {
       sendLimit > 0
         ? `本次最多实际发送 ${sendLimit} 封，已发跳过不占额度。`
         : '本次不限制实际发送封数。';
+    const startPositionText = nextRunnableRecipient
+      ? `将从第 ${nextRunnableOrdinal} 个未完成企业开始（文件第 ${nextRunnableRecipient.rowNumber} 行：${nextRunnableRecipient.companyName}）。`
+      : '';
     const confirmed = window.confirm(
-      `即将按邮箱去重后单线程处理 ${validRecipients.length} 条有效记录，每封间隔 ${config.sendIntervalSeconds} 秒。${sendLimitText}确认开始？`
+      `即将按邮箱去重后单线程处理 ${runnableRecipients.length} 条未完成有效记录，${startPositionText}每封间隔 ${config.sendIntervalSeconds} 秒。${sendLimitText}确认开始？`
     );
     if (!confirmed) return;
 
     setIsSending(true);
+    setIsPaused(false);
+    setIsStopping(false);
     setSummary(null);
     setNotice('');
     setLogs([]);
+    const runnableIds = new Set(runnableRecipients.map((row) => row.id));
     setRecipients((current) =>
       current.map((row) =>
-        row.isValid ? { ...row, status: 'pending', message: '' } : { ...row, status: 'failed' }
+        !row.isValid
+          ? { ...row, status: 'failed' }
+          : runnableIds.has(row.id)
+            ? { ...row, status: 'pending', message: '' }
+            : row
       )
     );
 
     try {
       const result = await invoke<BatchSummary>('start_batch_send', {
         config,
-        recipients: validRecipients
+        recipients: runnableRecipients
       });
       setSummary(result);
       setNotice(
-        `批量任务结束：成功 ${result.sent}，跳过 ${result.skipped}，失败 ${result.failed}。${
-          result.limitReached ? `已达到本次发送上限 ${sendLimit} 封，可再次点击继续发送。` : ''
-        }`
+        result.stopped
+          ? `批量任务已停止：成功 ${result.sent}，跳过 ${result.skipped}，失败 ${result.failed}。再次点击开始会从未完成企业继续。`
+          : `批量任务结束：成功 ${result.sent}，跳过 ${result.skipped}，失败 ${result.failed}。${
+              result.limitReached ? `已达到本次发送上限 ${sendLimit} 封，可再次点击继续发送。` : ''
+            }`
       );
     } catch (error) {
-      setNotice(`批量发送暂停：${String(error)}`);
+      setNotice(`批量发送中断：${String(error)}`);
     } finally {
       setIsSending(false);
+      setIsPaused(false);
+      setIsStopping(false);
+    }
+  }
+
+  async function pauseBatchSend() {
+    if (!isSending || isPaused || isStopping) return;
+    try {
+      await invoke('pause_batch_send');
+      setIsPaused(true);
+      setNotice('已请求暂停，当前邮件处理完成后会暂停。');
+    } catch (error) {
+      setNotice(`暂停失败：${String(error)}`);
+    }
+  }
+
+  async function resumeBatchSend() {
+    if (!isSending || !isPaused || isStopping) return;
+    try {
+      await invoke('resume_batch_send');
+      setIsPaused(false);
+      setNotice('已继续批量发送。');
+    } catch (error) {
+      setNotice(`继续失败：${String(error)}`);
+    }
+  }
+
+  async function stopBatchSend() {
+    if (!isSending || isStopping) return;
+    setIsStopping(true);
+    try {
+      await invoke('stop_batch_send');
+      setIsPaused(false);
+      setNotice('已请求停止，当前邮件处理完成后会停止。');
+    } catch (error) {
+      setIsStopping(false);
+      setNotice(`停止失败：${String(error)}`);
     }
   }
 
@@ -654,9 +713,21 @@ export default function App() {
               {isImportingSent ? <Loader2 className="spin" size={16} /> : <Database size={16} />}
               导入为已发
             </button>
+            <button
+              className="ghost-button"
+              onClick={isPaused ? resumeBatchSend : pauseBatchSend}
+              disabled={!isSending || isStopping}
+            >
+              {isPaused ? <Play size={16} /> : <Pause size={16} />}
+              {isPaused ? '继续' : '暂停'}
+            </button>
+            <button className="danger-button" onClick={stopBatchSend} disabled={!isSending || isStopping}>
+              {isStopping ? <Loader2 className="spin" size={16} /> : <Square size={16} />}
+              停止
+            </button>
             <button className="primary-button" onClick={startBatchSend} disabled={!canStart}>
               {isSending ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-              开始批量发送
+              {isSending ? '发送中' : '开始批量发送'}
             </button>
           </div>
 
@@ -664,6 +735,7 @@ export default function App() {
             <div className="summary-line">
               <Send size={16} />
               成功/新增 {summary.sent} 条，跳过 {summary.skipped} 条，失败 {summary.failed} 条。
+              {summary.stopped ? ' 已手动停止。' : ''}
               {summary.limitReached ? ' 已达到本次发送上限。' : ''}
             </div>
           ) : null}

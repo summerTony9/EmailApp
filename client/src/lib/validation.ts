@@ -51,3 +51,7 @@ export function getImportStats(rows: RecipientRow[]) {
     failed: rows.filter((row) => row.status === 'failed').length
   };
 }
+
+export function getRunnableRecipients(rows: RecipientRow[]) {
+  return rows.filter((row) => row.isValid && row.status !== 'sent' && row.status !== 'skipped');
+}

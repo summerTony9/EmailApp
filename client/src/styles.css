@@ -171,6 +171,14 @@ th {
   background: #115e59;
 }
 
+.danger-button {
+  background: #b42318;
+}
+
+.danger-button:hover:not(:disabled) {
+  background: #912018;
+}
+
 .notice {
   gap: 8px;
   margin-bottom: 16px;
@@ -359,6 +367,7 @@ th {
 .send-actions {
   margin-top: 14px;
   align-items: end;
+  flex-wrap: wrap;
 }
 
 .send-actions label {
