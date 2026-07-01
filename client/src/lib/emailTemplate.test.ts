@@ -23,6 +23,12 @@ describe('buildEmailPreview', () => {
     expect(preview.text).toContain('我行还有创业担保贷产品');
     expect(preview.text).toContain('利率同样可做到1.2%左右');
     expect(preview.text).toContain('配合推进知识产权质押融资相关手续');
+    expect(preview.text).toContain(
+      '如贵司需进一步了解相关政策及资料，可添加我的微信（与上述手机号码一致），我将及时发送相关资料供参考。'
+    );
+    expect(preview.html).toContain(
+      '如贵司需进一步了解相关政策及资料，可添加我的微信（与上述手机号码一致），我将及时发送相关资料供参考。'
+    );
     expect(preview.text).not.toContain('包括评估');
     expect(preview.text).not.toContain('补充融资方案');
     expect(preview.text).not.toContain('补贴利息50%');
