@@ -1,0 +1,19 @@
+services:
+  emailapp-cloud-mailer:
+    build:
+      context: ./cloud-mailer
+    container_name: emailapp-cloud-mailer
+    restart: unless-stopped
+    environment:
+      MAILER_HOST: "0.0.0.0"
+      MAILER_PORT: "8090"
+      MAILER_DB_PATH: "/data/cloud-mailer.sqlite"
+      MAILER_ADMIN_TOKEN: "${MAILER_ADMIN_TOKEN:-change-me-before-deploy}"
+    ports:
+      - "${MAILER_HOST_PORT:-8090}:8090"
+    volumes:
+      - emailapp-cloud-mailer-data:/data
+
+volumes:
+  emailapp-cloud-mailer-data:
+    name: emailapp-cloud-mailer-data

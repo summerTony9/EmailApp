@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EmailApp Cloud Mailer</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>EmailApp Cloud Mailer</h1>
+          <p>云端定时批量发信控制台</p>
+        </div>
+        <div class="top-actions">
+          <span id="serviceStatus" class="status-pill">未连接</span>
+          <button id="refreshButton" type="button" class="secondary">刷新</button>
+          <button id="logoutButton" type="button" class="secondary">退出</button>
+        </div>
+      </header>
+
+      <section id="loginPanel" class="login-panel">
+        <label>
+          管理 Token
+          <input id="tokenInput" type="password" autocomplete="current-password" />
+        </label>
+        <button id="loginButton" type="button">进入控制台</button>
+      </section>
+
+      <section id="notice" class="notice hidden"></section>
+
+      <section id="dashboard" class="dashboard hidden">
+        <aside class="panel settings-panel">
+          <div class="panel-title">
+            <h2>配置</h2>
+            <label class="switch">
+              <input id="enabledInput" type="checkbox" />
+              <span>启用</span>
+            </label>
+          </div>
+
+          <div class="field-grid">
+            <label>
+              每日时间
+              <input id="sendTimeInput" type="time" />
+            </label>
+            <label>
+              时区
+              <input id="timeZoneInput" list="timeZones" />
+            </label>
+          </div>
+          <datalist id="timeZones">
+            <option value="Asia/Shanghai"></option>
+            <option value="UTC"></option>
+            <option value="Asia/Hong_Kong"></option>
+            <option value="America/Los_Angeles"></option>
+          </datalist>
+
+          <div class="field-grid">
+            <label>
+              每日上限
+              <input id="dailyLimitInput" type="number" min="0" step="1" />
+            </label>
+            <label>
+              间隔秒数
+              <input id="intervalInput" type="number" min="0" step="1" />
+            </label>
+          </div>
+
+          <div class="field-grid">
+            <label>
+              SMTP 服务器
+              <input id="smtpHostInput" />
+            </label>
+            <label>
+              加密方式
+              <select id="smtpEncryptionInput">
+                <option value="tls">SSL/TLS</option>
+                <option value="starttls">STARTTLS</option>
+                <option value="none">不加密</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="field-grid">
+            <label>
+              SMTP 端口
+              <input id="smtpPortInput" type="number" min="1" />
+            </label>
+            <label>
+              SMTP 账号
+              <input id="smtpUsernameInput" />
+            </label>
+          </div>
+
+          <label>
+            SMTP 密码/授权码
+            <input id="smtpPasswordInput" type="password" autocomplete="new-password" />
+          </label>
+
+          <div class="field-grid">
+            <label>
+              发件人邮箱
+              <input id="fromEmailInput" />
+            </label>
+            <label>
+              发件人名称
+              <input id="fromNameInput" />
+            </label>
+          </div>
+
+          <label>
+            邮件主题
+            <input id="subjectInput" />
+          </label>
+
+          <div class="field-grid">
+            <label>
+              支行名
+              <input id="branchNameInput" />
+            </label>
+            <label>
+              行长名
+              <input id="presidentNameInput" />
+            </label>
+          </div>
+
+          <div class="field-grid">
+            <label>
+              客户经理
+              <input id="managerNameInput" />
+            </label>
+            <label>
+              电话
+              <input id="managerPhoneInput" />
+            </label>
+          </div>
+
+          <div id="settingsWarnings" class="warnings hidden"></div>
+          <button id="saveSettingsButton" type="button" class="primary">保存配置</button>
+        </aside>
+
+        <section class="main-column">
+          <section class="panel">
+            <div class="panel-title">
+              <h2>名单</h2>
+              <div class="button-row">
+                <button id="resetFailedButton" type="button" class="secondary">恢复失败</button>
+                <button id="clearPendingButton" type="button" class="danger">清空未发送</button>
+              </div>
+            </div>
+
+            <div class="stats-grid">
+              <div><span>总数</span><strong id="statTotal">0</strong></div>
+              <div><span>待发送</span><strong id="statPending">0</strong></div>
+              <div><span>发送中</span><strong id="statSending">0</strong></div>
+              <div><span>已发送</span><strong id="statSent">0</strong></div>
+              <div><span>失败</span><strong id="statFailed">0</strong></div>
+            </div>
+
+            <div class="upload-row">
+              <input id="fileInput" type="file" accept=".csv,.xlsx" />
+              <button id="uploadButton" type="button">导入名单</button>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>企业名</th>
+                    <th>邮箱</th>
+                    <th>状态</th>
+                    <th>说明</th>
+                  </tr>
+                </thead>
+                <tbody id="recipientRows">
+                  <tr><td colspan="4" class="empty-cell">暂无名单</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="split-row">
+            <section class="panel">
+              <div class="panel-title">
+                <h2>发送</h2>
+                <span id="jobStatus" class="status-pill">空闲</span>
+              </div>
+              <div class="field-grid">
+                <label>
+                  测试邮箱
+                  <input id="testEmailInput" />
+                </label>
+                <label>
+                  测试企业
+                  <input id="testCompanyInput" value="北京创谱科技有限公司" />
+                </label>
+              </div>
+              <div class="button-row">
+                <button id="testButton" type="button" class="secondary">发送测试</button>
+                <button id="runNowButton" type="button" class="primary">立即发送</button>
+                <button id="stopJobButton" type="button" class="danger">停止任务</button>
+              </div>
+              <div id="runRows" class="run-list"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-title">
+                <h2>预览</h2>
+              </div>
+              <article id="emailPreview" class="email-preview"></article>
+            </section>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <h2>日志</h2>
+            </div>
+            <div id="logRows" class="log-list"></div>
+          </section>
+        </section>
+      </section>
+    </main>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

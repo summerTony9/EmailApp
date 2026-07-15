@@ -11,13 +11,18 @@
     "server:dev": "npm --prefix server run dev",
     "server:start": "npm --prefix server run start",
     "server:test": "npm --prefix server run test",
-    "test": "npm run server:test && npm run client:test",
+    "cloud-mailer:dev": "npm --prefix cloud-mailer run dev",
+    "cloud-mailer:start": "npm --prefix cloud-mailer run start",
+    "cloud-mailer:test": "npm --prefix cloud-mailer run test",
+    "test": "npm run server:test && npm run client:test && npm run cloud-mailer:test",
     "build": "npm run client:build",
     "docker:up": "docker compose up --build",
+    "docker:cloud-mailer:up": "docker compose -f docker-compose.cloud-mailer.yml up --build -d",
+    "docker:cloud-mailer:logs": "docker compose -f docker-compose.cloud-mailer.yml logs -f emailapp-cloud-mailer",
+    "docker:cloud-mailer:down": "docker compose -f docker-compose.cloud-mailer.yml down",
     "docker:down": "docker compose down"
   },
   "engines": {
     "node": ">=20"
   }
 }
-

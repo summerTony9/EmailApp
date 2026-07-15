@@ -103,6 +103,70 @@ docker compose down
 
 已发记录按 `sent_at` 计算 90 天有效期。更新到包含过期逻辑的版本后，不需要手动迁移数据库，服务器里已有的邮箱不会在服务启动时被删除；超过 90 天的记录只是在 `/api/check` 时不再判定为已发送。再次发送成功并写入 `/api/sent` 时，服务端会先把旧记录复制到 `sent_record_history`，再刷新 `sent_records` 中该邮箱的当前记录。
 
+## 云端定时发信服务
+
+如果希望在云服务器上独立运行一个“每天定时、定量自动发邮件”的服务，使用新增的 `cloud-mailer`。它是一个单独 Docker 服务，带 Web 控制台、名单导入、SMTP 配置、每日定时任务、手动立即发送和发送日志；不会和当前 `emailapp-server` 混在一起，也不会共用原来的 SQLite 数据卷。
+
+首次部署：
+
+```bash
+git clone https://github.com/summerTony9/EmailApp.git
+cd EmailApp
+cp .env.example .env
+openssl rand -hex 32
+nano .env
+```
+
+在 `.env` 里至少配置：
+
+```env
+MAILER_ADMIN_TOKEN=replace-with-the-random-token
+MAILER_HOST_PORT=8090
+```
+
+启动独立云端发信服务：
+
+```bash
+docker compose -f docker-compose.cloud-mailer.yml up --build -d
+```
+
+验证：
+
+```bash
+curl http://127.0.0.1:${MAILER_HOST_PORT:-8090}/health
+docker compose -f docker-compose.cloud-mailer.yml logs -f emailapp-cloud-mailer
+```
+
+浏览器打开：
+
+```text
+http://服务器IP:8090
+```
+
+用 `.env` 里的 `MAILER_ADMIN_TOKEN` 登录控制台后：
+
+1. 填写 SMTP 服务器、端口、加密方式、账号、授权码、发件人邮箱。
+2. 设置每日发送时间、时区、每日上限和每封间隔秒数。
+3. 导入 CSV 或 XLSX 名单，字段为企业名、邮箱；已发送成功的邮箱不会被重新置为待发送。
+4. 先发送测试邮件，确认 SMTP 可用后再启用定时任务。
+5. 如需立刻处理当天额度，可点击“立即发送”。
+
+云端定时发信服务的数据保存在 Docker volume `emailapp-cloud-mailer-data` 中。SMTP 授权码会保存在这个服务自己的 SQLite 数据库里；建议只在可信网络访问控制台，或在服务器前面加 HTTPS 反向代理和安全组/IP 白名单。云服务器安全组也需要允许容器访问对应 SMTP 出站端口，例如 465 或 587。
+
+日常更新：
+
+```bash
+cd EmailApp
+git pull
+docker compose -f docker-compose.cloud-mailer.yml up --build -d
+```
+
+停止：
+
+```bash
+docker compose -f docker-compose.cloud-mailer.yml down
+```
+
 本地开发部署步骤：
 
 1. 复制环境变量：
